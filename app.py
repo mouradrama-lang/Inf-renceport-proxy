@@ -1,5 +1,5 @@
 import asyncio, json, os, time
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 import httpx
 
@@ -16,7 +16,15 @@ TOKEN = os.environ.get("PROXY_TOKEN", "")
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
-app = FastAPI(title="inferenceport-proxy")
+app = FastAPI(title="inferenceport-proxy")  
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"],
+)
 
 # Cache pour la liste des modèles
 model_cache = {"ts": 0.0, "data": None}
