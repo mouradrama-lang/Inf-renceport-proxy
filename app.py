@@ -1,22 +1,19 @@
 import asyncio, json, os, time
-from fastapi import FastAPI, Request from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 import httpx
 
-# URL du service gratuit InferencePort AI
 UPSTREAM = os.environ.get("UPSTREAM_URL", "https://sharktide-lightning.hf.space").rstrip("/")
 RETRIES = int(os.environ.get("RETRIES", "3"))
 CONNECT_TIMEOUT = float(os.environ.get("CONNECT_TIMEOUT", "8"))
 READ_TIMEOUT = float(os.environ.get("READ_TIMEOUT", "600"))
-CHAT_READ_TIMEOUT = float(os.environ.get("CHAT_READ_TIMEOUT", "120"))
 MODEL_CACHE_TTL = int(os.environ.get("MODEL_CACHE_TTL", "300"))
-
-# Optionnel : un jeton pour protéger ton proxy. Laisse vide pour un accès ouvert.
 TOKEN = os.environ.get("PROXY_TOKEN", "")
-
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
-app = FastAPI(title="inferenceport-proxy")  
+app = FastAPI(title="inferenceport-proxy")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -26,15 +23,16 @@ app.add_middleware(
     expose_headers=["*"],
 )
 
-# Cache pour la liste des modèles
 model_cache = {"ts": 0.0, "data": None}
 models_lock = asyncio.Lock()
+
 
 def auth_ok(request: Request) -> bool:
     if not TOKEN:
         return True
     h = request.headers.get("Authorization", "")
     return h == f"Bearer {TOKEN}" or h == TOKEN
+
 
 async def fetch_models():
     async with models_lock:
@@ -50,6 +48,7 @@ async def fetch_models():
         except Exception as e:
             print(f"[models] fetch error: {e}", flush=True)
         return model_cache["data"]
+
 
 async def upstream_call(path: str, method: str, body: bytes = None, params=None, read_timeout=READ_TIMEOUT):
     url = f"{UPSTREAM}{path}"
@@ -72,13 +71,9 @@ async def upstream_call(path: str, method: str, body: bytes = None, params=None,
         raise last
     return last.status_code, last.headers, last.content
 
-# ═══════════════════════════════════════════════════════════════
-# ROUTES
-# ═══════════════════════════════════════════════════════════════
 
 @app.get("/v1/healthz")
 async def healthz():
-    """Vérifie que le proxy est en ligne et que le service amont est joignable."""
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(10, connect=5), trust_env=False) as c:
             r = await c.get(f"{UPSTREAM}/gen/models", headers={"User-Agent": UA})
@@ -87,19 +82,19 @@ async def healthz():
         upstream_ok = False
     return {"status": "ok", "upstream": upstream_ok}
 
+
 @app.get("/v1/models")
 async def list_models():
-    """Liste les modèles disponibles (texte, image, vidéo)."""
     data = await fetch_models()
     if data is None:
-        return JSONResponse({"error": "Impossible de récupérer les modèles"}, status_code=502)
+        return JSONResponse({"error": "Impossible de recuperer les modeles"}, status_code=502)
     return data
+
 
 @app.post("/v1/videos")
 async def create_video(request: Request):
-    """Crée une tâche de génération de vidéo (asynchrone)."""
     if not auth_ok(request):
-        return JSONResponse({"error": "Non autorisé"}, status_code=401)
+        return JSONResponse({"error": "Non autorise"}, status_code=401)
     body = await request.body()
     try:
         status, headers, content = await upstream_call(
@@ -109,24 +104,22 @@ async def create_video(request: Request):
         return JSONResponse({"error": f"Erreur amont : {str(e)}"}, status_code=502)
     return JSONResponse(content=json.loads(content), status_code=status)
 
+
 @app.get("/v1/videos/{job_id}")
 async def get_video_status(job_id: str, request: Request):
-    """Récupère l'état d'une tâche vidéo."""
     if not auth_ok(request):
-        return JSONResponse({"error": "Non autorisé"}, status_code=401)
+        return JSONResponse({"error": "Non autorise"}, status_code=401)
     try:
-        status, headers, content = await upstream_call(
-            f"/gen/video/{job_id}", "GET"
-        )
+        status, headers, content = await upstream_call(f"/gen/video/{job_id}", "GET")
     except Exception as e:
         return JSONResponse({"error": f"Erreur amont : {str(e)}"}, status_code=502)
     return JSONResponse(content=json.loads(content), status_code=status)
 
+
 @app.get("/v1/videos/{job_id}/content")
 async def get_video_content(job_id: str, request: Request):
-    """Télécharge le fichier MP4 d'une vidéo terminée."""
     if not auth_ok(request):
-        return JSONResponse({"error": "Non autorisé"}, status_code=401)
+        return JSONResponse({"error": "Non autorise"}, status_code=401)
     try:
         status, headers, content = await upstream_call(
             f"/gen/video/{job_id}/content", "GET", read_timeout=READ_TIMEOUT
@@ -136,9 +129,7 @@ async def get_video_content(job_id: str, request: Request):
     media_type = headers.get("content-type", "video/mp4")
     return StreamingResponse(iter([content]), media_type=media_type)
 
-# ═══════════════════════════════════════════════════════════════
-# LANCEMENT (pour le développement local)
-# ═══════════════════════════════════════════════════════════════
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", "8080"))
